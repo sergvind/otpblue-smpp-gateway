@@ -1,0 +1,65 @@
+# Production overlay — adds TLS certs and monitoring stack.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Or set in .env on the Droplet:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml
+#
+# Required .env variables:
+#   DOMAIN=smpp.otpblue.com
+#   SMPP_AUTH_API_URL=https://...
+#   SMPP_AUTH_API_KEY=...
+#   GRAFANA_ADMIN_PASSWORD=<strong-random-password>
+
+services:
+  smpp-connector:
+    environment:
+      - SMPP_TLS_KEY_PATH=/etc/letsencrypt/live/${DOMAIN}/privkey.pem
+      - SMPP_TLS_CERT_PATH=/etc/letsencrypt/live/${DOMAIN}/fullchain.pem
+      - SMPP_AUTH_API_URL=${SMPP_AUTH_API_URL}
+      - SMPP_AUTH_API_KEY=${SMPP_AUTH_API_KEY}
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    networks:
+      - monitoring
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+    networks:
+      - monitoring
+    restart: unless-stopped
+    depends_on:
+      smpp-connector:
+        condition: service_healthy
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-changeme}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - monitoring
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+
+networks:
+  monitoring:
+    driver: bridge
+
+volumes:
+  prometheus-data:
+  grafana-data:
