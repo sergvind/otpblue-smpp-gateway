@@ -5,7 +5,7 @@
 OTP Blue provides OTP code delivery via iMessage. This SMPP interface allows you to route OTP traffic to OTP Blue using the standard SMPP protocol — the same way you connect to any SMS carrier or channel.
 
 Key benefits:
-- **Instant delivery status** — You know if the message was delivered immediately (faster than SMS)
+- **Instant delivery status** — You know if the message was delivered to network immediately (faster than SMS)
 - **Instant failover** — If the recipient doesn't have iMessage, you get an error response immediately so you can failover to SMS without delay
 - **Standard SMPP** — No special integration work; use your existing SMPP client infrastructure
 
@@ -14,12 +14,15 @@ Key benefits:
 | Parameter | Value |
 |---|---|
 | **Protocol** | SMPP v3.4 |
-| **Plaintext port** | 2775 |
-| **TLS port** | 2776 (recommended) |
+| **TLS port** | 2776 (**required** — use this port) |
+| **Plaintext port** | 2775 (disabled by default; may be enabled in test environments) |
+| **TLS version** | TLSv1.2 or higher |
 | **Bind mode** | Transceiver (TRX) recommended |
 | **Host** | Provided during onboarding |
 | **system_id** | Provided during onboarding |
 | **password** | Provided during onboarding |
+
+**TLS is required.** All production connections must use the TLS port (2776). The plaintext port is disabled by default and may only be available in test environments. SMPP credentials and OTP codes are encrypted in transit when using TLS.
 
 ## SMPP Session Lifecycle
 
@@ -36,9 +39,17 @@ Key benefits:
 5. TCP Close
 ```
 
+### Timeouts
+
+| Timeout | Duration | Description |
+|---|---|---|
+| **Pre-bind** | 30 seconds | You must complete the bind handshake within 30 seconds of opening the TCP connection, or the connection will be closed |
+| **Inactivity** | 90 seconds | Sessions that don't send `enquire_link` or `submit_sm` within 90 seconds will be disconnected |
+| **Max session duration** | 24 hours | Sessions are disconnected after 24 hours regardless of activity. Your client should reconnect automatically |
+
 ### Keepalive
 
-Send `enquire_link` at least every 60 seconds. Sessions that are idle for more than 90 seconds will be disconnected.
+Send `enquire_link` at least every 60 seconds to prevent the 90-second inactivity timeout.
 
 ## Sending OTP Messages
 
@@ -50,9 +61,9 @@ Send `enquire_link` at least every 60 seconds. Sessions that are idle for more t
 | `source_addr` | Your brand name | e.g., `"MyBank"` — appears as bold subject line in iMessage (max 11 chars) |
 | `dest_addr_ton` | `0x01` | International |
 | `dest_addr_npi` | `0x01` | ISDN / E.164 |
-| `destination_addr` | Recipient phone | E.164 format with country code, e.g., `"14155551234"` |
+| `destination_addr` | Recipient phone | E.164 format with country code, e.g., `"14155551234"` (max 21 chars) |
 | `data_coding` | `0x00` | Default (ASCII/GSM 7-bit) |
-| `short_message` | Full OTP message | e.g., `"Your verification code is 482910"` |
+| `short_message` | Full OTP message | e.g., `"Your verification code is 482910"` (max 512 bytes) |
 | `registered_delivery` | `0x01` | Request delivery receipt (recommended) |
 
 ### Example submit_sm
@@ -93,6 +104,17 @@ The connector automatically extracts the OTP code from your message text. You ca
 
 The OTP code must be 4-10 digits. The connector extracts it and delivers it using OTP Blue's iMessage template, with your brand name displayed as the bold subject line.
 
+### Input Limits
+
+| Field | Limit | Error if exceeded |
+|---|---|---|
+| `short_message` | 512 bytes | `ESME_RINVMSGLEN` (0x01) |
+| `destination_addr` | 21 characters | `ESME_RINVDSTADR` (0x0B) |
+| OTP code | 4-10 digits | `ESME_RINVMSGLEN` (0x01) |
+| Phone number | Must be a valid E.164 number | `ESME_RINVDSTADR` (0x0B) |
+
+Phone numbers are validated using international phone number parsing. Invalid or malformed numbers are rejected immediately — they will not be forwarded to the delivery platform.
+
 ### Language
 
 The iMessage template language is configured per account during onboarding. If your traffic serves multiple countries, the connector can automatically select the template language based on the destination phone number's country code.
@@ -115,6 +137,7 @@ The response arrives immediately (no queuing — the delivery status is known sy
 | `ESME_RINVMSGLEN` | `0x01` | Could not extract OTP code from message | Check your message format |
 | `ESME_RINVBNDSTS` | `0x04` | Not bound / wrong bind mode | Bind first, then submit |
 | `ESME_RINVPASWD` | `0x0E` | Authentication failed | Check system_id and password |
+| `ESME_RBINDFAIL` | `0x0D` | IP not allowed, or IP temporarily blocked | Check IP allowlist; wait if blocked |
 
 ### Delivery Receipts (deliver_sm)
 
@@ -168,7 +191,15 @@ The error response is instant (typically <500ms), so the end-user won't notice a
 
 Your account has a configured maximum transactions per second (TPS). If you exceed this rate, you will receive `ESME_RTHROTTLED` (0x58). Implement standard SMPP backoff when you receive this error.
 
+The rate limit is **shared across all your sessions**. Opening multiple SMPP connections with the same `system_id` does not increase your available TPS — all connections share one rate limit.
+
 You can use SMPP windowing (multiple unacknowledged submit_sm PDUs in flight) for throughput, but total rate should stay within your TPS limit.
+
+## Authentication & IP Security
+
+- Your source IP may be restricted via an allowlist configured during onboarding. Connections from non-allowed IPs are rejected immediately.
+- **Brute-force protection**: After multiple failed bind attempts from the same IP, that IP is temporarily blocked for 15 minutes. If your automated systems are failing to bind, verify your credentials before retrying — repeated failures will trigger a block.
+- Blocked IPs receive `ESME_RBINDFAIL` without further detail.
 
 ## Supported Destinations
 
@@ -214,16 +245,34 @@ Verify your `enquire_link` interval is working:
 ← enquire_link_resp (command_status: 0x00)
 ```
 
+## Connection Limits
+
+The gateway enforces connection limits to ensure service availability for all clients:
+
+| Limit | Value |
+|---|---|
+| Max concurrent connections (global) | 1000 |
+| Pre-bind timeout | 30 seconds |
+| Inactivity timeout | 90 seconds |
+| Max session duration | 24 hours |
+
+If the global connection limit is reached, new TCP connections are rejected until existing sessions close. Ensure your SMPP client does not hold unnecessary idle connections.
+
 ## Troubleshooting
 
 | Issue | Cause | Solution |
 |---|---|---|
 | Bind rejected (0x0E) | Wrong system_id or password | Verify credentials with OTP Blue |
-| Bind rejected (0x0D) | IP not whitelisted | Request your IP to be added |
-| submit_sm returns 0x04 | Not bound | Send bind_transceiver first |
-| submit_sm returns 0x01 | OTP code not found in message | Ensure message contains a 4-10 digit code |
+| Bind rejected (0x0D) | IP not allowed | Request your IP to be added to the allowlist |
+| Bind rejected (0x0D) repeatedly | IP temporarily blocked (brute-force protection) | Wait 15 minutes, then retry with correct credentials |
+| Connection closed immediately | Global connection limit reached | Reduce idle connections; retry after a short delay |
+| Connection closed after 30s | Pre-bind timeout — bind not completed in time | Ensure your client sends `bind_transceiver` immediately after TCP connect |
+| Session disconnected after 24h | Max session duration reached | Expected — reconnect automatically |
+| submit_sm returns 0x04 | Not bound / receiver-only bind mode | Bind as transceiver or transmitter first |
+| submit_sm returns 0x01 | OTP code not found in message, or message exceeds 512 bytes | Ensure message contains a 4-10 digit code and is under 512 bytes |
+| submit_sm returns 0x0B | Invalid phone number or destination_addr exceeds 21 chars | Use valid E.164 phone numbers |
 | submit_sm returns 0x45 | Recipient has no iMessage | Expected — failover to SMS |
-| submit_sm returns 0x58 | Rate limit exceeded | Reduce sending rate or request higher TPS |
+| submit_sm returns 0x58 | Rate limit exceeded (shared across all your sessions) | Reduce sending rate or request higher TPS |
 | Session disconnected | Inactivity timeout (90s) | Send enquire_link every 30-60 seconds |
 | No delivery receipt | `registered_delivery` not set | Set `registered_delivery=0x01` in submit_sm |
 
