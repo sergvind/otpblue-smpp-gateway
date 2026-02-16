@@ -10,12 +10,50 @@ export class CredentialStore {
   private clients: Map<string, ClientConfig>;
 
   constructor(clients: ClientConfig[]) {
-    this.clients = new Map();
+    this.clients = this.buildClientMap(clients);
+    logger.info({ count: this.clients.size }, 'Credential store loaded');
+  }
+
+  /**
+   * Atomically replace the client map with new configuration.
+   * New binds will use updated credentials; existing sessions are unaffected
+   * because they hold their own reference to the old ClientConfig object.
+   */
+  reload(clients: ClientConfig[]): { added: string[]; updated: string[]; removed: string[] } {
+    const newMap = this.buildClientMap(clients);
+
+    const added: string[] = [];
+    const updated: string[] = [];
+    const removed: string[] = [];
+
+    for (const [id, client] of newMap) {
+      if (!this.clients.has(id)) {
+        added.push(id);
+      } else if (JSON.stringify(this.clients.get(id)) !== JSON.stringify(client)) {
+        updated.push(id);
+      }
+    }
+    for (const id of this.clients.keys()) {
+      if (!newMap.has(id)) {
+        removed.push(id);
+      }
+    }
+
+    this.clients = newMap;
+
+    if (added.length || updated.length || removed.length) {
+      logger.info({ added, updated, removed, total: newMap.size }, 'Credential store reloaded');
+    }
+
+    return { added, updated, removed };
+  }
+
+  private buildClientMap(clients: ClientConfig[]): Map<string, ClientConfig> {
+    const map = new Map<string, ClientConfig>();
     for (const client of clients) {
       if (client.enabled) {
-        this.clients.set(client.systemId, client);
+        map.set(client.systemId, client);
 
-        // Warn if plaintext password is used
         const isHash = client.password.startsWith('$2b$') || client.password.startsWith('$2a$');
         if (!isHash) {
           logger.warn(
@@ -25,7 +63,7 @@ export class CredentialStore {
         }
       }
     }
-    logger.info({ count: this.clients.size }, 'Credential store loaded');
+    return map;
   }
 
   findBySystemId(systemId: string): ClientConfig | undefined {
