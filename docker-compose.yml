@@ -4,13 +4,20 @@ services:
     ports:
       - "2775:2775"
       - "2776:2776"
-      - "8080:8080"
+      # Health/metrics port is bound to 127.0.0.1 inside the container by default.
+      # Expose it only if your Prometheus scraper runs outside Docker:
+      # - "8080:8080"
     environment:
       - NODE_ENV=production
       - LOG_LEVEL=info
       - SMPP_PORT=2775
       - SMPP_TLS_PORT=2776
+      - SMPP_ENABLE_PLAINTEXT=true
+      - SMPP_MAX_CONNECTIONS=1000
+      - SMPP_PRE_BIND_TIMEOUT_S=30
+      - SMPP_MAX_SESSION_DURATION_S=86400
       - HEALTH_PORT=8080
+      - HEALTH_BIND_ADDRESS=0.0.0.0  # Inside container, use Docker network isolation instead
       - OTPBLUE_API_URL=https://api.otpblue.com/imsg/api/v1.1/otp/send/
       - OTPBLUE_API_TIMEOUT_MS=15000
       - CLIENT_CONFIG_PATH=/config/clients.json

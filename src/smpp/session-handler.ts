@@ -2,6 +2,7 @@ import smpp from 'smpp';
 import type { Session, PDU } from 'smpp';
 import type { AppConfig, ClientConfig } from '../config/schema.js';
 import { CredentialStore } from '../auth/credential-store.js';
+import { BindRateLimiter } from '../auth/bind-rate-limiter.js';
 import { OtpBlueClient } from '../api/otpblue-client.js';
 import { extractOtpCode, resolveSender } from '../protocol/message-parser.js';
 import { normalizeToE164, resolveLanguage } from '../protocol/address-normalizer.js';
@@ -12,12 +13,17 @@ import { TokenBucketRateLimiter } from '../utils/rate-limiter.js';
 import { logger, maskPhone } from '../monitoring/logger.js';
 import * as metrics from '../monitoring/metrics.js';
 
+// Input size limits
+const MAX_SHORT_MESSAGE_BYTES = 512;
+const MAX_DESTINATION_ADDR_LEN = 21;
+
 interface SessionState {
   clientConfig: ClientConfig | null;
   rateLimiter: TokenBucketRateLimiter | null;
   bound: boolean;
   bindMode: 'tx' | 'rx' | 'trx' | null;
   inactivityTimer: ReturnType<typeof setTimeout> | null;
+  maxSessionTimer: ReturnType<typeof setTimeout> | null;
 }
 
 export function createSessionHandler(
@@ -25,6 +31,9 @@ export function createSessionHandler(
   credentialStore: CredentialStore,
   otpBlueClient: OtpBlueClient,
   config: AppConfig,
+  bindRateLimiter: BindRateLimiter,
+  clientRateLimiters: Map<string, TokenBucketRateLimiter>,
+  preBindTimer: ReturnType<typeof setTimeout>,
 ): void {
   const state: SessionState = {
     clientConfig: null,
@@ -32,6 +41,7 @@ export function createSessionHandler(
     bound: false,
     bindMode: null,
     inactivityTimer: null,
+    maxSessionTimer: null,
   };
 
   const sessionLog = logger.child({ remote: session.remoteAddress });
@@ -54,27 +64,46 @@ export function createSessionHandler(
   async function handleBind(pdu: PDU, mode: 'tx' | 'rx' | 'trx') {
     const systemId = pdu.system_id || '';
     const password = pdu.password || '';
+    const remoteIp = session.remoteAddress || 'unknown';
     const bindLog = sessionLog.child({ systemId, bindMode: mode });
+
+    // Check if IP is blocked due to repeated failures
+    if (bindRateLimiter.isBlocked(remoteIp)) {
+      bindLog.warn({ ip: remoteIp }, 'Bind rejected: IP temporarily blocked');
+      session.send(pdu.response({ command_status: smpp.ESME_RBINDFAIL }));
+      session.destroy();
+      return;
+    }
 
     const client = await credentialStore.verifyPassword(systemId, password);
     if (!client) {
-      bindLog.warn('Bind failed: invalid credentials');
+      bindRateLimiter.recordFailure(remoteIp);
+      bindLog.warn({ ip: remoteIp }, 'Bind failed: invalid credentials');
       metrics.smppConnectionsTotal.inc({ system_id: systemId, status: 'auth_failed' });
       session.send(pdu.response({ command_status: smpp.ESME_RINVPASWD }));
       session.destroy();
       return;
     }
 
-    if (!credentialStore.isIpAllowed(client, session.remoteAddress)) {
-      bindLog.warn('Bind failed: IP not allowed');
+    if (!credentialStore.isIpAllowed(client, remoteIp)) {
+      bindLog.warn({ ip: remoteIp }, 'Bind failed: IP not allowed');
       metrics.smppConnectionsTotal.inc({ system_id: systemId, status: 'ip_denied' });
       session.send(pdu.response({ command_status: smpp.ESME_RBINDFAIL }));
       session.destroy();
       return;
     }
 
+    // Successful bind
+    clearTimeout(preBindTimer);
+    bindRateLimiter.recordSuccess(remoteIp);
+
+    // Use shared per-client rate limiter
+    if (!clientRateLimiters.has(systemId)) {
+      clientRateLimiters.set(systemId, new TokenBucketRateLimiter(client.maxTps));
+    }
+
     state.clientConfig = client;
-    state.rateLimiter = new TokenBucketRateLimiter(client.maxTps);
+    state.rateLimiter = clientRateLimiters.get(systemId)!;
     state.bound = true;
     state.bindMode = mode;
 
@@ -84,6 +113,15 @@ export function createSessionHandler(
 
     session.send(pdu.response({ command_status: smpp.ESME_ROK }));
     resetInactivityTimer();
+
+    // Maximum session duration timer
+    state.maxSessionTimer = setTimeout(() => {
+      sessionLog.info('Maximum session duration reached, disconnecting');
+      try { session.unbind(); } catch { /* ignore */ }
+      setTimeout(() => {
+        try { session.destroy(); } catch { /* ignore */ }
+      }, 5000);
+    }, config.smpp.maxSessionDurationS * 1000);
   }
 
   session.on('bind_transceiver', (pdu: PDU) => handleBind(pdu, 'trx'));
@@ -111,7 +149,21 @@ export function createSessionHandler(
 
     metrics.submitSmReceived.inc({ system_id: systemId });
 
-    // 1. Rate limiting
+    // 1. Input size validation
+    const destAddr = pdu.destination_addr || '';
+    if (destAddr.length > MAX_DESTINATION_ADDR_LEN) {
+      session.send(pdu.response({ command_status: smpp.ESME_RINVDSTADR }));
+      return;
+    }
+
+    const shortMessage = pdu.short_message || '';
+    const msgByteLen = getMessageByteLength(shortMessage);
+    if (msgByteLen > MAX_SHORT_MESSAGE_BYTES) {
+      session.send(pdu.response({ command_status: smpp.ESME_RINVMSGLEN }));
+      return;
+    }
+
+    // 2. Rate limiting (shared per client, not per session)
     if (!state.rateLimiter.tryConsume()) {
       metrics.submitSmThrottled.inc({ system_id: systemId });
       session.send(pdu.response({ command_status: smpp.ESME_RTHROTTLED }));
@@ -121,16 +173,17 @@ export function createSessionHandler(
     const submitTime = new Date();
 
     try {
-      // 2. Normalize destination phone to E.164
-      const phone = normalizeToE164(
-        pdu.destination_addr || '',
-        pdu.dest_addr_ton || 0,
-        pdu.dest_addr_npi || 0,
-      );
+      // 3. Normalize destination phone to E.164
+      const phone = normalizeToE164(destAddr, pdu.dest_addr_ton || 0, pdu.dest_addr_npi || 0);
 
-      // 3. Extract OTP code from message text
+      if (!phone) {
+        session.send(pdu.response({ command_status: smpp.ESME_RINVDSTADR }));
+        return;
+      }
+
+      // 4. Extract OTP code from message text
       const code = extractOtpCode(
-        pdu.short_message || '',
+        shortMessage,
         pdu.data_coding || 0,
         { codePatterns: client.codePatterns },
       );
@@ -144,17 +197,17 @@ export function createSessionHandler(
         return;
       }
 
-      // 4. Resolve sender from source_addr
+      // 5. Resolve sender from source_addr
       const sender = resolveSender(
         pdu.source_addr || '',
         pdu.source_addr_ton || 0,
         client.defaultSender,
       );
 
-      // 5. Resolve language
+      // 6. Resolve language
       const language = resolveLanguage(client.defaultLanguage, phone);
 
-      // 6. Call OTP Blue API
+      // 7. Call OTP Blue API
       const apiStartMs = Date.now();
       const apiResponse = await otpBlueClient.sendOtp(
         { contact: phone, code, sender, language },
@@ -164,7 +217,7 @@ export function createSessionHandler(
 
       const doneTime = new Date();
 
-      // 7. Handle response
+      // 8. Handle response
       if (apiResponse.success) {
         // ── Success path ──
         metrics.submitSmSuccess.inc({ system_id: systemId });
@@ -175,7 +228,6 @@ export function createSessionHandler(
           message_id: apiResponse.message_id,
         }));
 
-        // Send delivery receipt if requested
         if (shouldSendReceipt(pdu.registered_delivery || 0, 'delivered')) {
           const receipt = buildDeliveryReceipt({
             messageId: apiResponse.message_id,
@@ -207,7 +259,6 @@ export function createSessionHandler(
         metrics.otpblueApiLatency.observe({ system_id: systemId, status: 'failed' }, apiLatencyS);
 
         if (client.failureMode === 'receipt_only') {
-          // Return ESME_ROK, convey failure via DLR only
           const internalId = generateMessageId();
           session.send(pdu.response({
             command_status: smpp.ESME_ROK,
@@ -231,7 +282,6 @@ export function createSessionHandler(
             session.deliver_sm(receipt as Record<string, unknown>);
           }
         } else {
-          // Default: return SMPP error immediately (for fast aggregator failover)
           const smppStatus = mapOtpBlueErrorToSmppStatus(errorCode);
           session.send(pdu.response({
             command_status: smppStatus,
@@ -242,12 +292,10 @@ export function createSessionHandler(
         sessionLog.info({
           destination: maskPhone(phone),
           errorCode,
-          errorMessage: apiResponse.message,
           failureMode: client.failureMode,
         }, 'OTP delivery failed');
       }
     } catch (error) {
-      // Network/timeout error calling OTP Blue API
       sessionLog.error(
         { error: error instanceof Error ? error.message : String(error) },
         'API call error',
@@ -288,9 +336,14 @@ export function createSessionHandler(
   // ── Cleanup ─────────────────────────────────────────────────────
 
   function cleanupSession() {
+    clearTimeout(preBindTimer);
     if (state.inactivityTimer) {
       clearTimeout(state.inactivityTimer);
       state.inactivityTimer = null;
+    }
+    if (state.maxSessionTimer) {
+      clearTimeout(state.maxSessionTimer);
+      state.maxSessionTimer = null;
     }
     if (state.clientConfig && state.bound) {
       metrics.smppActiveConnections.dec({ system_id: state.clientConfig.systemId });
@@ -309,4 +362,15 @@ function shouldSendReceipt(registeredDelivery: number, outcome: 'delivered' | 'f
   if (receiptBits === 0x02 && outcome === 'failed') return true;  // Receipt on failure only
   if (receiptBits === 0x03 && outcome === 'delivered') return true; // Receipt on success only (v5.0)
   return false;
+}
+
+function getMessageByteLength(msg: unknown): number {
+  if (Buffer.isBuffer(msg)) return msg.length;
+  if (typeof msg === 'string') return Buffer.byteLength(msg);
+  if (msg && typeof msg === 'object' && 'message' in msg) {
+    const inner = (msg as Record<string, unknown>).message;
+    if (Buffer.isBuffer(inner)) return inner.length;
+    if (typeof inner === 'string') return Buffer.byteLength(inner);
+  }
+  return Buffer.byteLength(String(msg));
 }

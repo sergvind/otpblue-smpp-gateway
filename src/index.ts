@@ -14,7 +14,7 @@ async function main() {
   const otpBlueClient = new OtpBlueClient(config.otpblue.apiUrl, config.otpblue.timeoutMs);
 
   // Start health/metrics HTTP server
-  const healthServer = startHealthServer(config.health.port);
+  const healthServer = startHealthServer(config.health.port, config.health.bindAddress);
 
   // Start SMPP servers (plaintext + optional TLS)
   const smppServers = startSmppServers(config, credentialStore, otpBlueClient);

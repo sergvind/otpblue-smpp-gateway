@@ -102,6 +102,13 @@ function buildPatterns(customPatterns?: string[]): RegExp[] {
   if (!customPatterns || customPatterns.length === 0) {
     return DEFAULT_PATTERNS;
   }
-  const custom = customPatterns.map(p => new RegExp(p, 'i'));
+  const custom: RegExp[] = [];
+  for (const p of customPatterns) {
+    try {
+      custom.push(new RegExp(p, 'i'));
+    } catch {
+      // Skip invalid regex patterns — logged at config load time
+    }
+  }
   return [...custom, ...DEFAULT_PATTERNS];
 }

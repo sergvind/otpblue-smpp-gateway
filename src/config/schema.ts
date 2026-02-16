@@ -20,8 +20,12 @@ const SmppSchema = z.object({
   tlsPort: z.number().int().default(2776),
   tlsKeyPath: z.string().optional(),
   tlsCertPath: z.string().optional(),
+  enablePlaintext: z.boolean().default(true),
   enquireLinkTimeoutS: z.number().int().default(90),
   shutdownGracePeriodS: z.number().int().default(5),
+  maxConnections: z.number().int().min(1).max(100000).default(1000),
+  preBindTimeoutS: z.number().int().min(5).max(300).default(30),
+  maxSessionDurationS: z.number().int().min(60).default(86400),
 });
 
 const OtpBlueSchema = z.object({
@@ -31,6 +35,7 @@ const OtpBlueSchema = z.object({
 
 const HealthSchema = z.object({
   port: z.number().int().default(8080),
+  bindAddress: z.string().default('127.0.0.1'),
 });
 
 const ConfigSchema = z.object({

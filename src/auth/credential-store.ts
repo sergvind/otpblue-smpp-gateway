@@ -1,6 +1,10 @@
+import crypto from 'node:crypto';
 import bcrypt from 'bcrypt';
 import type { ClientConfig } from '../config/schema.js';
 import { logger } from '../monitoring/logger.js';
+
+// Dummy hash used when systemId is not found, to prevent timing enumeration
+const DUMMY_HASH = '$2b$10$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ012';
 
 export class CredentialStore {
   private clients: Map<string, ClientConfig>;
@@ -10,6 +14,15 @@ export class CredentialStore {
     for (const client of clients) {
       if (client.enabled) {
         this.clients.set(client.systemId, client);
+
+        // Warn if plaintext password is used
+        const isHash = client.password.startsWith('$2b$') || client.password.startsWith('$2a$');
+        if (!isHash) {
+          logger.warn(
+            { systemId: client.systemId },
+            'Client uses plaintext password. Use bcrypt hashes in production (e.g. npx bcrypt-cli hash "password")',
+          );
+        }
       }
     }
     logger.info({ count: this.clients.size }, 'Credential store loaded');
@@ -21,13 +34,24 @@ export class CredentialStore {
 
   async verifyPassword(systemId: string, password: string): Promise<ClientConfig | null> {
     const client = this.clients.get(systemId);
-    if (!client) return null;
 
-    // Support both bcrypt hashes and plaintext passwords (for dev/testing)
+    if (!client) {
+      // Run a dummy bcrypt compare to prevent timing-based systemId enumeration
+      await bcrypt.compare(password, DUMMY_HASH).catch(() => {});
+      return null;
+    }
+
     const isHash = client.password.startsWith('$2b$') || client.password.startsWith('$2a$');
-    const valid = isHash
-      ? await bcrypt.compare(password, client.password)
-      : password === client.password;
+    let valid: boolean;
+
+    if (isHash) {
+      valid = await bcrypt.compare(password, client.password);
+    } else {
+      // Constant-time comparison for plaintext passwords
+      const a = Buffer.from(password);
+      const b = Buffer.from(client.password);
+      valid = a.length === b.length && crypto.timingSafeEqual(a, b);
+    }
 
     return valid ? client : null;
   }

@@ -5,6 +5,8 @@ import type { Session, PDU } from 'smpp';
 import { CredentialStore } from '../../src/auth/credential-store.js';
 import { OtpBlueClient } from '../../src/api/otpblue-client.js';
 import { createSessionHandler } from '../../src/smpp/session-handler.js';
+import { BindRateLimiter } from '../../src/auth/bind-rate-limiter.js';
+import { TokenBucketRateLimiter } from '../../src/utils/rate-limiter.js';
 import type { AppConfig, ClientConfig } from '../../src/config/schema.js';
 
 const TEST_PORT = 12775;
@@ -26,14 +28,18 @@ const testConfig: AppConfig = {
   smpp: {
     port: TEST_PORT,
     tlsPort: TEST_PORT + 1,
+    enablePlaintext: true,
     enquireLinkTimeoutS: 30,
     shutdownGracePeriodS: 1,
+    maxConnections: 1000,
+    preBindTimeoutS: 30,
+    maxSessionDurationS: 86400,
   },
   otpblue: {
     apiUrl: API_URL + API_PATH,
     timeoutMs: 5000,
   },
-  health: { port: 18080 },
+  health: { port: 18080, bindAddress: '127.0.0.1' },
   logLevel: 'error',
   clients: [testClient],
 };
@@ -41,13 +47,29 @@ const testConfig: AppConfig = {
 let server: ReturnType<typeof smpp.createServer>;
 let credentialStore: CredentialStore;
 let otpBlueClient: OtpBlueClient;
+let bindRateLimiter: BindRateLimiter;
+let clientRateLimiters: Map<string, TokenBucketRateLimiter>;
 
 beforeAll(() => {
   credentialStore = new CredentialStore([testClient]);
   otpBlueClient = new OtpBlueClient(testConfig.otpblue.apiUrl, testConfig.otpblue.timeoutMs);
+  bindRateLimiter = new BindRateLimiter();
+  clientRateLimiters = new Map();
 
   server = smpp.createServer((session: Session) => {
-    createSessionHandler(session, credentialStore, otpBlueClient, testConfig);
+    const preBindTimer = setTimeout(() => {
+      try { session.destroy(); } catch { /* ignore */ }
+    }, testConfig.smpp.preBindTimeoutS * 1000);
+
+    createSessionHandler(
+      session,
+      credentialStore,
+      otpBlueClient,
+      testConfig,
+      bindRateLimiter,
+      clientRateLimiters,
+      preBindTimer,
+    );
   });
 
   return new Promise<void>((resolve) => {
@@ -253,6 +275,7 @@ describe('SMPP Integration Flow', () => {
       session.submit_sm(
         {
           source_addr: 'Test',
+          dest_addr_ton: 0x01,
           destination_addr: '14155551234',
           short_message: 'Hello World no digits here',
           registered_delivery: 0x01,
@@ -266,6 +289,9 @@ describe('SMPP Integration Flow', () => {
   });
 
   it('returns ESME_RTHROTTLED when rate limit exceeded', async () => {
+    // Use a fresh rate limiter map so this test isn't affected by others
+    clientRateLimiters.clear();
+
     const session = await connectClient();
     await bindTransceiver(session);
 

@@ -2,7 +2,7 @@
   "clients": [
     {
       "systemId": "acme_otp",
-      "password": "changeme",
+      "password": "$2b$10$exampleHashReplaceWithRealBcryptHashHere...",
       "apiKey": "your-otpblue-api-key-here",
       "defaultSender": "Acme",
       "defaultLanguage": "en",

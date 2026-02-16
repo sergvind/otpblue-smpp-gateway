@@ -22,8 +22,12 @@ export function loadConfig(): AppConfig {
       tlsPort: int(process.env.SMPP_TLS_PORT, 2776),
       tlsKeyPath: process.env.SMPP_TLS_KEY_PATH,
       tlsCertPath: process.env.SMPP_TLS_CERT_PATH,
+      enablePlaintext: process.env.SMPP_ENABLE_PLAINTEXT !== 'false',
       enquireLinkTimeoutS: int(process.env.ENQUIRE_LINK_TIMEOUT_S, 90),
       shutdownGracePeriodS: int(process.env.SHUTDOWN_GRACE_PERIOD_S, 5),
+      maxConnections: int(process.env.SMPP_MAX_CONNECTIONS, 1000),
+      preBindTimeoutS: int(process.env.SMPP_PRE_BIND_TIMEOUT_S, 30),
+      maxSessionDurationS: int(process.env.SMPP_MAX_SESSION_DURATION_S, 86400),
     },
     otpblue: {
       apiUrl: process.env.OTPBLUE_API_URL || 'https://api.otpblue.com/imsg/api/v1.1/otp/send/',
@@ -31,6 +35,7 @@ export function loadConfig(): AppConfig {
     },
     health: {
       port: int(process.env.HEALTH_PORT, 8080),
+      bindAddress: process.env.HEALTH_BIND_ADDRESS || '127.0.0.1',
     },
     logLevel: process.env.LOG_LEVEL || 'info',
     clients,

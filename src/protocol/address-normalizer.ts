@@ -5,18 +5,22 @@ const PNF = libphonenumber.PhoneNumberFormat;
 
 /**
  * Normalize an SMPP destination address to E.164 format (+1234567890).
+ * Returns null if the phone number cannot be validated.
  * Handles different TON (Type of Number) values.
  */
 export function normalizeToE164(
   address: string,
   ton: number,
   _npi: number,
-): string {
+): string | null {
   // TON 0x05 = Alphanumeric sender ID, not a phone number
   if (ton === 0x05) return address;
 
   // Clean the address
   let cleaned = address.replace(/[\s\-()]/g, '');
+
+  // Reject obviously invalid input
+  if (!cleaned || cleaned.length < 7 || cleaned.length > 16) return null;
 
   // TON 0x01 = International: should have country code, may lack '+'
   if (ton === 0x01 && !cleaned.startsWith('+')) {
@@ -33,7 +37,7 @@ export function normalizeToE164(
     } catch {
       // Fall through
     }
-    return cleaned;
+    return null;
   }
 
   // For numbers without '+' (TON=Unknown or National): try as international
@@ -47,8 +51,7 @@ export function normalizeToE164(
     // Fall through
   }
 
-  // Last resort: return with '+' prefix
-  return '+' + cleaned;
+  return null;
 }
 
 /**

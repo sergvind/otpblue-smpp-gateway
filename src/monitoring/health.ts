@@ -8,7 +8,7 @@ export function setReady(ready: boolean): void {
   isReady = ready;
 }
 
-export function startHealthServer(port: number): http.Server {
+export function startHealthServer(port: number, bindAddress: string = '127.0.0.1'): http.Server {
   const server = http.createServer(async (req, res) => {
     if (req.url === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -39,8 +39,8 @@ export function startHealthServer(port: number): http.Server {
     res.end('Not found');
   });
 
-  server.listen(port, () => {
-    logger.info({ port }, 'Health/metrics server listening');
+  server.listen(port, bindAddress, () => {
+    logger.info({ port, bindAddress }, 'Health/metrics server listening');
   });
 
   return server;
