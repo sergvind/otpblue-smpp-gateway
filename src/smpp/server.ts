@@ -12,7 +12,6 @@ import { TokenBucketRateLimiter } from '../utils/rate-limiter.js';
 export interface SmppServers {
   plain?: SmppServer;
   tls?: SmppServer;
-  clientRateLimiters: Map<string, TokenBucketRateLimiter>;
   shutdown: () => Promise<void>;
 }
 
@@ -113,5 +112,5 @@ export function startSmppServers(
     });
   };
 
-  return { plain, tls, clientRateLimiters, shutdown };
+  return { plain, tls, shutdown };
 }

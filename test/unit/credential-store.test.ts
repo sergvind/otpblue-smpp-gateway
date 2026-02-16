@@ -1,5 +1,6 @@
-import { describe, it, expect, vi } from 'vitest';
-import type { ClientConfig } from '../../src/config/schema.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import nock from 'nock';
+import type { ClientConfig, AuthApiConfig } from '../../src/config/schema.js';
 
 // Suppress logger output in tests
 vi.mock('../../src/monitoring/logger.js', () => ({
@@ -13,10 +14,20 @@ vi.mock('../../src/monitoring/logger.js', () => ({
 
 import { CredentialStore } from '../../src/auth/credential-store.js';
 
-function makeClient(overrides: Partial<ClientConfig> = {}): ClientConfig {
+const API_BASE = 'https://auth.example.com';
+const API_KEY = 'test-auth-key';
+const AUTH_PATH = '/api/v1/smpp/auth/';
+
+const authApiConfig: AuthApiConfig = {
+  url: API_BASE,
+  apiKey: API_KEY,
+  cacheTtlMs: 60_000,
+};
+
+function makeClientResponse(overrides: Partial<ClientConfig> = {}): ClientConfig {
   return {
     systemId: 'test_client',
-    password: '$2b$10$5Ic2KDjl6Si4uqKgulJKr.PsW42bM5jJc9uWK8ptMKuE.CWnVD6RS',
+    password: 'test_pass',
     apiKey: 'test-api-key',
     defaultSender: 'OTP',
     defaultLanguage: 'en',
@@ -29,73 +40,208 @@ function makeClient(overrides: Partial<ClientConfig> = {}): ClientConfig {
   };
 }
 
-describe('CredentialStore', () => {
-  it('loads enabled clients', () => {
-    const store = new CredentialStore([makeClient({ systemId: 'a' }), makeClient({ systemId: 'b' })]);
-    expect(store.findBySystemId('a')).toBeDefined();
-    expect(store.findBySystemId('b')).toBeDefined();
+describe('CredentialStore (API-backed)', () => {
+  let store: CredentialStore;
+
+  beforeEach(() => {
+    nock.cleanAll();
+    store = new CredentialStore(authApiConfig);
   });
 
-  it('skips disabled clients', () => {
-    const store = new CredentialStore([makeClient({ systemId: 'a', enabled: false })]);
-    expect(store.findBySystemId('a')).toBeUndefined();
+  afterEach(() => {
+    nock.cleanAll();
   });
 
-  describe('reload()', () => {
-    it('adds new clients', () => {
-      const store = new CredentialStore([makeClient({ systemId: 'a' })]);
-      const diff = store.reload([makeClient({ systemId: 'a' }), makeClient({ systemId: 'b' })]);
+  describe('verifyPassword()', () => {
+    it('fetches from API and verifies correct plaintext password', async () => {
+      nock(API_BASE)
+        .get(AUTH_PATH)
+        .query({ system_id: 'test_client' })
+        .reply(200, makeClientResponse());
 
-      expect(diff.added).toEqual(['b']);
-      expect(diff.updated).toEqual([]);
-      expect(diff.removed).toEqual([]);
-      expect(store.findBySystemId('b')).toBeDefined();
+      const result = await store.verifyPassword('test_client', 'test_pass');
+      expect(result).not.toBeNull();
+      expect(result!.systemId).toBe('test_client');
+      expect(result!.apiKey).toBe('test-api-key');
     });
 
-    it('removes clients no longer in config', () => {
-      const store = new CredentialStore([makeClient({ systemId: 'a' }), makeClient({ systemId: 'b' })]);
-      const diff = store.reload([makeClient({ systemId: 'a' })]);
+    it('returns null for wrong password', async () => {
+      nock(API_BASE)
+        .get(AUTH_PATH)
+        .query({ system_id: 'test_client' })
+        .reply(200, makeClientResponse());
 
-      expect(diff.removed).toEqual(['b']);
-      expect(store.findBySystemId('b')).toBeUndefined();
+      const result = await store.verifyPassword('test_client', 'wrong_pass');
+      expect(result).toBeNull();
     });
 
-    it('removes clients that are disabled', () => {
-      const store = new CredentialStore([makeClient({ systemId: 'a' }), makeClient({ systemId: 'b' })]);
-      const diff = store.reload([makeClient({ systemId: 'a' }), makeClient({ systemId: 'b', enabled: false })]);
+    it('returns null for unknown systemId (API 404)', async () => {
+      nock(API_BASE)
+        .get(AUTH_PATH)
+        .query({ system_id: 'unknown' })
+        .reply(404, { error: 'Not found' });
 
-      expect(diff.removed).toEqual(['b']);
-      expect(store.findBySystemId('b')).toBeUndefined();
+      const result = await store.verifyPassword('unknown', 'pass');
+      expect(result).toBeNull();
     });
 
-    it('detects updated clients', () => {
-      const store = new CredentialStore([makeClient({ systemId: 'a', maxTps: 50 })]);
-      const diff = store.reload([makeClient({ systemId: 'a', maxTps: 200 })]);
+    it('returns null for disabled client', async () => {
+      nock(API_BASE)
+        .get(AUTH_PATH)
+        .query({ system_id: 'disabled' })
+        .reply(200, makeClientResponse({ systemId: 'disabled', enabled: false }));
 
-      expect(diff.updated).toEqual(['a']);
-      expect(store.findBySystemId('a')!.maxTps).toBe(200);
+      const result = await store.verifyPassword('disabled', 'test_pass');
+      expect(result).toBeNull();
     });
 
-    it('returns empty diff when nothing changed', () => {
-      const client = makeClient({ systemId: 'a' });
-      const store = new CredentialStore([client]);
-      const diff = store.reload([makeClient({ systemId: 'a' })]);
+    it('sends Authorization header to API', async () => {
+      nock(API_BASE, { reqheaders: { authorization: API_KEY } })
+        .get(AUTH_PATH)
+        .query({ system_id: 'test_client' })
+        .reply(200, makeClientResponse());
 
-      expect(diff.added).toEqual([]);
-      expect(diff.updated).toEqual([]);
-      expect(diff.removed).toEqual([]);
+      const result = await store.verifyPassword('test_client', 'test_pass');
+      expect(result).not.toBeNull();
+    });
+  });
+
+  describe('caching', () => {
+    it('uses cached result on second call (no second API request)', async () => {
+      const scope = nock(API_BASE)
+        .get(AUTH_PATH)
+        .query({ system_id: 'test_client' })
+        .once()
+        .reply(200, makeClientResponse());
+
+      await store.verifyPassword('test_client', 'test_pass');
+      await store.verifyPassword('test_client', 'test_pass');
+
+      scope.done();
     });
 
-    it('preserves old references after reload', () => {
-      const store = new CredentialStore([makeClient({ systemId: 'a', apiKey: 'old-key' })]);
-      const oldRef = store.findBySystemId('a');
+    it('re-fetches after TTL expires', async () => {
+      const shortTtlStore = new CredentialStore({
+        ...authApiConfig,
+        cacheTtlMs: 50,
+      });
 
-      store.reload([makeClient({ systemId: 'a', apiKey: 'new-key' })]);
+      nock(API_BASE)
+        .get(AUTH_PATH)
+        .query({ system_id: 'test_client' })
+        .reply(200, makeClientResponse({ apiKey: 'key-v1' }));
 
-      // Old reference still holds old value
-      expect(oldRef!.apiKey).toBe('old-key');
-      // New lookup returns new value
-      expect(store.findBySystemId('a')!.apiKey).toBe('new-key');
+      const first = await shortTtlStore.verifyPassword('test_client', 'test_pass');
+      expect(first!.apiKey).toBe('key-v1');
+
+      await new Promise(resolve => setTimeout(resolve, 60));
+
+      nock(API_BASE)
+        .get(AUTH_PATH)
+        .query({ system_id: 'test_client' })
+        .reply(200, makeClientResponse({ apiKey: 'key-v2' }));
+
+      const second = await shortTtlStore.verifyPassword('test_client', 'test_pass');
+      expect(second!.apiKey).toBe('key-v2');
+    });
+
+    it('falls back to stale cache when API is down', async () => {
+      const shortTtlStore = new CredentialStore({
+        ...authApiConfig,
+        cacheTtlMs: 50,
+      });
+
+      nock(API_BASE)
+        .get(AUTH_PATH)
+        .query({ system_id: 'test_client' })
+        .reply(200, makeClientResponse());
+
+      const first = await shortTtlStore.verifyPassword('test_client', 'test_pass');
+      expect(first).not.toBeNull();
+
+      await new Promise(resolve => setTimeout(resolve, 60));
+
+      nock(API_BASE)
+        .get(AUTH_PATH)
+        .query({ system_id: 'test_client' })
+        .replyWithError('connect ECONNREFUSED');
+
+      const second = await shortTtlStore.verifyPassword('test_client', 'test_pass');
+      expect(second).not.toBeNull();
+      expect(second!.systemId).toBe('test_client');
+    });
+
+    it('returns null when API is down and no stale cache', async () => {
+      nock(API_BASE)
+        .get(AUTH_PATH)
+        .query({ system_id: 'test_client' })
+        .replyWithError('connect ECONNREFUSED');
+
+      const result = await store.verifyPassword('test_client', 'test_pass');
+      expect(result).toBeNull();
+    });
+
+    it('evict() forces re-fetch on next call', async () => {
+      nock(API_BASE)
+        .get(AUTH_PATH)
+        .query({ system_id: 'test_client' })
+        .reply(200, makeClientResponse({ apiKey: 'old-key' }));
+
+      await store.verifyPassword('test_client', 'test_pass');
+
+      store.evict('test_client');
+
+      nock(API_BASE)
+        .get(AUTH_PATH)
+        .query({ system_id: 'test_client' })
+        .reply(200, makeClientResponse({ apiKey: 'new-key' }));
+
+      const result = await store.verifyPassword('test_client', 'test_pass');
+      expect(result!.apiKey).toBe('new-key');
+    });
+  });
+
+  describe('API error handling', () => {
+    it('handles invalid API response (Zod validation failure)', async () => {
+      nock(API_BASE)
+        .get(AUTH_PATH)
+        .query({ system_id: 'test_client' })
+        .reply(200, { systemId: '', password: '' });
+
+      const result = await store.verifyPassword('test_client', 'test_pass');
+      expect(result).toBeNull();
+    });
+
+    it('handles API 500 error', async () => {
+      nock(API_BASE)
+        .get(AUTH_PATH)
+        .query({ system_id: 'test_client' })
+        .reply(500, 'Internal Server Error');
+
+      const result = await store.verifyPassword('test_client', 'test_pass');
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('isIpAllowed()', () => {
+    it('allows any IP when allowedIps is empty', () => {
+      const client = makeClientResponse({ allowedIps: [] });
+      expect(store.isIpAllowed(client, '10.0.0.1')).toBe(true);
+    });
+
+    it('allows listed IP', () => {
+      const client = makeClientResponse({ allowedIps: ['10.0.0.1', '10.0.0.2'] });
+      expect(store.isIpAllowed(client, '10.0.0.1')).toBe(true);
+    });
+
+    it('rejects unlisted IP', () => {
+      const client = makeClientResponse({ allowedIps: ['10.0.0.1'] });
+      expect(store.isIpAllowed(client, '10.0.0.99')).toBe(false);
+    });
+
+    it('normalizes IPv6-mapped IPv4 addresses', () => {
+      const client = makeClientResponse({ allowedIps: ['10.0.0.1'] });
+      expect(store.isIpAllowed(client, '::ffff:10.0.0.1')).toBe(true);
     });
   });
 });

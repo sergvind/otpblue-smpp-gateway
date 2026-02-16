@@ -27,9 +27,9 @@ The gateway accepts standard SMPP `submit_sm` PDUs, extracts the OTP code from t
 # Install dependencies
 npm install
 
-# Create client configuration
-cp config/clients.example.json config/clients.json
-# Edit config/clients.json with your OTP Blue API key and client credentials
+# Set environment variables
+cp .env.example .env
+# Edit .env — set SMPP_AUTH_API_URL and SMPP_AUTH_API_KEY
 
 # Start the gateway
 npm run dev
@@ -40,30 +40,13 @@ The SMPP server listens on port 2775 and the health server on port 8080.
 ## Docker
 
 ```bash
-cp config/clients.example.json config/clients.json
-# Edit config/clients.json
-
+# Set auth API credentials in docker-compose.yml or .env
 docker compose up -d
 ```
 
 ## Configuration
 
-Client configuration in `config/clients.json`:
-
-```json
-{
-  "clients": [
-    {
-      "systemId": "acme_otp",
-      "password": "$2b$10$... (bcrypt hash)",
-      "apiKey": "your-otpblue-api-key",
-      "defaultSender": "Acme",
-      "defaultLanguage": "en",
-      "maxTps": 50
-    }
-  ]
-}
-```
+Client credentials are fetched on-demand from the backend auth API (`SMPP_AUTH_API_URL`) and cached in memory for 30 minutes. Manage clients through the dashboard — no config files or restarts needed.
 
 See [Deployment Guide](docs/deployment.md) for all environment variables and configuration options.
 

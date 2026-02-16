@@ -38,14 +38,22 @@ const HealthSchema = z.object({
   bindAddress: z.string().default('127.0.0.1'),
 });
 
+const AuthApiSchema = z.object({
+  url: z.string().url(),
+  apiKey: z.string().min(1),
+  cacheTtlMs: z.number().int().min(0).default(1_800_000), // 30 minutes
+});
+
+export type AuthApiConfig = z.output<typeof AuthApiSchema>;
+
 const ConfigSchema = z.object({
   smpp: SmppSchema.optional().transform(v => SmppSchema.parse(v ?? {})),
   otpblue: OtpBlueSchema.optional().transform(v => OtpBlueSchema.parse(v ?? {})),
   health: HealthSchema.optional().transform(v => HealthSchema.parse(v ?? {})),
+  authApi: AuthApiSchema,
   logLevel: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
-  clients: z.array(ClientSchema).min(1),
 });
 
 export type AppConfig = z.output<typeof ConfigSchema>;
 
-export { ConfigSchema, ClientSchema };
+export { ConfigSchema, ClientSchema, AuthApiSchema };

@@ -55,7 +55,7 @@ src/
 ├── index.ts                         Entry point
 │
 ├── config/
-│   ├── index.ts                     Loads env vars + clients.json, validates with Zod
+│   ├── index.ts                     Loads env vars, validates with Zod
 │   └── schema.ts                    Zod schemas for configuration
 │
 ├── smpp/

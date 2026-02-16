@@ -1,21 +1,9 @@
-import fs from 'node:fs';
 import dotenv from 'dotenv';
 import { ConfigSchema, type AppConfig } from './schema.js';
 
 dotenv.config();
 
 export function loadConfig(): AppConfig {
-  const clientConfigPath = process.env.CLIENT_CONFIG_PATH || 'config/clients.json';
-
-  let clients: unknown[];
-  try {
-    const raw = fs.readFileSync(clientConfigPath, 'utf-8');
-    const parsed = JSON.parse(raw);
-    clients = parsed.clients ?? parsed;
-  } catch (err) {
-    throw new Error(`Failed to load client config from ${clientConfigPath}: ${err}`);
-  }
-
   const rawConfig = {
     smpp: {
       port: int(process.env.SMPP_PORT, 2775),
@@ -37,8 +25,12 @@ export function loadConfig(): AppConfig {
       port: int(process.env.HEALTH_PORT, 8080),
       bindAddress: process.env.HEALTH_BIND_ADDRESS || '127.0.0.1',
     },
+    authApi: {
+      url: process.env.SMPP_AUTH_API_URL,
+      apiKey: process.env.SMPP_AUTH_API_KEY,
+      cacheTtlMs: int(process.env.SMPP_AUTH_CACHE_TTL_MS, 1_800_000),
+    },
     logLevel: process.env.LOG_LEVEL || 'info',
-    clients,
   };
 
   return ConfigSchema.parse(rawConfig);

@@ -6,7 +6,7 @@ This document describes the security measures implemented in the SMPP gateway, c
 
 ### SMPP Bind Credentials
 
-Each client authenticates via `system_id` and `password` during the SMPP bind handshake. Passwords are verified using **bcrypt** hashes stored in `config/clients.json`.
+Each client authenticates via `system_id` and `password` during the SMPP bind handshake. Passwords are verified against credentials fetched from the backend auth API and cached in memory.
 
 - Bcrypt hashes with cost factor 10+ are supported (`$2b$` and `$2a$` prefixes)
 - Plaintext passwords are supported for development but **log a warning at startup** — do not use in production
@@ -118,23 +118,20 @@ For Docker deployments, the `docker-compose.yml` sets `HEALTH_BIND_ADDRESS=0.0.0
 
 | File | Contains |
 |---|---|
-| `config/clients.json` | SMPP passwords (bcrypt hashes), OTP Blue API keys |
-| `.env` | Environment variables (no secrets by default) |
+| `.env` | `SMPP_AUTH_API_KEY`, auth API credentials |
 | `certs/*.pem` | TLS private keys |
 
 ### Protections
 
-- `config/clients.json` is in `.gitignore` — will not be accidentally committed
 - `certs/` directory and `*.pem`/`*.key` files are in `.gitignore`
 - `.env` is in `.gitignore`
-- The Docker build uses `.dockerignore` to exclude `config/clients.json`, `.env`, `certs/`, `test/`, and `.git/` from the build context
-- Config files are mounted read-only in Docker (`./config:/config:ro`)
+- The Docker build uses `.dockerignore` to exclude `.env`, `certs/`, `test/`, and `.git/` from the build context
+- Client credentials are never stored on disk — fetched from auth API and cached in memory only
 
 ### Recommendations
 
-- Use a secrets manager (AWS Secrets Manager, HashiCorp Vault, Docker secrets) for API keys in production
-- Rotate API keys periodically — this requires updating `config/clients.json` and restarting the gateway
-- Set file permissions: `chmod 600 config/clients.json`
+- Use a secrets manager (AWS Secrets Manager, HashiCorp Vault, Docker secrets) for `SMPP_AUTH_API_KEY` in production
+- Rotate API keys through the dashboard — no gateway restart needed (cache expires after 30 min)
 
 ## Docker Security
 
@@ -159,15 +156,14 @@ These are understood trade-offs, not bugs:
 
 4. **No CIDR support in IP allowlists** — IPs must be listed individually. CIDR range support (e.g., `10.0.0.0/8`) is not currently implemented.
 
-5. **No API key rotation API** — changing API keys or passwords requires editing `config/clients.json` and restarting the gateway.
+5. **Cache TTL delay** — after changing client credentials in the dashboard, the gateway may use the old cached credentials for up to `SMPP_AUTH_CACHE_TTL_MS` (default 30 minutes).
 
 ## Security Checklist for Production
 
 - [ ] All client passwords are bcrypt hashes (no plaintext)
 - [ ] TLS is enabled (`SMPP_TLS_KEY_PATH` and `SMPP_TLS_CERT_PATH` set)
 - [ ] Plaintext SMPP port is disabled (`SMPP_ENABLE_PLAINTEXT=false`)
-- [ ] `config/clients.json` has restrictive file permissions (`chmod 600`)
-- [ ] `config/clients.json` is not committed to git
+- [ ] `SMPP_AUTH_API_KEY` is stored securely (not in source code)
 - [ ] Health server is not exposed externally (bound to `127.0.0.1` or behind firewall)
 - [ ] IP allowlists are configured for each client where possible
 - [ ] Log level is set to `info` (not `debug`)

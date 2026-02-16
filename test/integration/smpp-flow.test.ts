@@ -7,11 +7,21 @@ import { OtpBlueClient } from '../../src/api/otpblue-client.js';
 import { createSessionHandler } from '../../src/smpp/session-handler.js';
 import { BindRateLimiter } from '../../src/auth/bind-rate-limiter.js';
 import { TokenBucketRateLimiter } from '../../src/utils/rate-limiter.js';
-import type { AppConfig, ClientConfig } from '../../src/config/schema.js';
+import type { AppConfig, AuthApiConfig, ClientConfig } from '../../src/config/schema.js';
 
 const TEST_PORT = 12775;
 const API_URL = 'https://api.otpblue.com';
 const API_PATH = '/imsg/api/v1.1/otp/send/';
+
+const AUTH_API_BASE = 'https://auth.test.com';
+const AUTH_API_KEY = 'test-auth-key';
+const AUTH_PATH = '/api/v1/smpp/auth/';
+
+const authApiConfig: AuthApiConfig = {
+  url: AUTH_API_BASE,
+  apiKey: AUTH_API_KEY,
+  cacheTtlMs: 300_000,
+};
 
 const testClient: ClientConfig = {
   systemId: 'test_client',
@@ -41,7 +51,7 @@ const testConfig: AppConfig = {
   },
   health: { port: 18080, bindAddress: '127.0.0.1' },
   logLevel: 'error',
-  clients: [testClient],
+  authApi: authApiConfig,
 };
 
 let server: ReturnType<typeof smpp.createServer>;
@@ -51,7 +61,7 @@ let bindRateLimiter: BindRateLimiter;
 let clientRateLimiters: Map<string, TokenBucketRateLimiter>;
 
 beforeAll(() => {
-  credentialStore = new CredentialStore([testClient]);
+  credentialStore = new CredentialStore(authApiConfig);
   otpBlueClient = new OtpBlueClient(testConfig.otpblue.apiUrl, testConfig.otpblue.timeoutMs);
   bindRateLimiter = new BindRateLimiter();
   clientRateLimiters = new Map();
@@ -89,6 +99,16 @@ afterAll(() => {
 
 beforeEach(() => {
   nock.cleanAll();
+
+  // Auth API mocks for credential store
+  nock(AUTH_API_BASE)
+    .get(AUTH_PATH)
+    .query({ system_id: 'test_client' })
+    .reply(200, testClient);
+  nock(AUTH_API_BASE)
+    .get(AUTH_PATH)
+    .query({ system_id: 'unknown' })
+    .reply(404, { error: 'Not found' });
 });
 
 function connectClient(): Promise<Session> {

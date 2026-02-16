@@ -1,5 +1,4 @@
 import { loadConfig } from './config/index.js';
-import { ConfigWatcher } from './config/config-watcher.js';
 import { CredentialStore } from './auth/credential-store.js';
 import { OtpBlueClient } from './api/otpblue-client.js';
 import { startSmppServers } from './smpp/server.js';
@@ -9,9 +8,9 @@ import { logger } from './monitoring/logger.js';
 async function main() {
   const config = loadConfig();
   logger.level = config.logLevel;
-  logger.info({ clients: config.clients.length }, 'Configuration loaded');
+  logger.info('Configuration loaded');
 
-  const credentialStore = new CredentialStore(config.clients);
+  const credentialStore = new CredentialStore(config.authApi);
   const otpBlueClient = new OtpBlueClient(config.otpblue.apiUrl, config.otpblue.timeoutMs);
 
   // Start health/metrics HTTP server
@@ -21,26 +20,10 @@ async function main() {
   const smppServers = startSmppServers(config, credentialStore, otpBlueClient);
   setReady(true);
 
-  // Start config hot-reload watcher
-  const configWatcher = new ConfigWatcher({
-    configPath: process.env.CLIENT_CONFIG_PATH || 'config/clients.json',
-    credentialStore,
-    clientRateLimiters: smppServers.clientRateLimiters,
-    pollIntervalMs: parseInt(process.env.CONFIG_POLL_INTERVAL_MS || '30000', 10),
-  });
-  configWatcher.start();
-
-  // SIGHUP = immediate config reload
-  process.on('SIGHUP', () => {
-    logger.info('Received SIGHUP, reloading client configuration');
-    configWatcher.forceReload();
-  });
-
   // Graceful shutdown
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Received shutdown signal');
     setReady(false);
-    configWatcher.stop();
 
     await smppServers.shutdown();
     healthServer.close();

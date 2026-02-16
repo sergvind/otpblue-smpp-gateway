@@ -20,11 +20,12 @@ services:
       - HEALTH_BIND_ADDRESS=0.0.0.0  # Inside container, use Docker network isolation instead
       - OTPBLUE_API_URL=https://api.otpblue.com/imsg/api/v1.1/otp/send/
       - OTPBLUE_API_TIMEOUT_MS=15000
-      - CLIENT_CONFIG_PATH=/config/clients.json
+      - SMPP_AUTH_API_URL=https://your-backend.example.com
+      - SMPP_AUTH_API_KEY=your-auth-api-key
+      # - SMPP_AUTH_CACHE_TTL_MS=1800000
       - ENQUIRE_LINK_TIMEOUT_S=90
       - SHUTDOWN_GRACE_PERIOD_S=5
-    volumes:
-      - ./config:/config:ro
+    # volumes:
       # - ./certs:/certs:ro  # Uncomment for TLS
     restart: unless-stopped
     healthcheck:
