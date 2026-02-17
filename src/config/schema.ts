@@ -8,6 +8,10 @@ const ClientSchema = z.object({
   maxTps: z.number().int().min(1).max(10000).default(50),
   codePatterns: z.array(z.string()).optional(),
   allowedIps: z.array(z.string()).optional(),
+  allowSendText: z.union([
+    z.boolean(),
+    z.enum(['true', 'false']).transform(v => v === 'true'),
+  ]).default(false),
   enabled: z.boolean().default(true),
   failureMode: z.enum(['immediate', 'receipt_only']).default('immediate'),
 });

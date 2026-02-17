@@ -4,7 +4,7 @@ import type { AppConfig, ClientConfig } from '../config/schema.js';
 import { CredentialStore } from '../auth/credential-store.js';
 import { BindRateLimiter } from '../auth/bind-rate-limiter.js';
 import { OtpBlueClient } from '../api/otpblue-client.js';
-import { extractOtpCode, resolveSender } from '../protocol/message-parser.js';
+import { extractOtpCode, resolveSender, decodeMessage } from '../protocol/message-parser.js';
 import { normalizeToE164 } from '../protocol/address-normalizer.js';
 import { mapOtpBlueErrorToSmppStatus } from '../protocol/error-mapper.js';
 import { buildDeliveryReceipt } from '../protocol/delivery-receipt.js';
@@ -181,20 +181,34 @@ export function createSessionHandler(
         return;
       }
 
-      // 4. Extract OTP code from message text
-      const code = extractOtpCode(
-        shortMessage,
-        pdu.data_coding || 0,
-        { codePatterns: client.codePatterns },
-      );
+      // 4. Get message content for API
+      let code: string;
 
-      if (!code) {
-        sessionLog.warn(
-          { destination: maskPhone(phone) },
-          'Could not extract OTP code from message',
+      if (client.allowSendText) {
+        // Send full message text to the API
+        const text = decodeMessage(shortMessage, pdu.data_coding || 0).trim();
+        if (!text) {
+          session.send(pdu.response({ command_status: smpp.ESME_RINVMSGLEN }));
+          return;
+        }
+        code = text;
+      } else {
+        // Extract OTP code from message text
+        const extracted = extractOtpCode(
+          shortMessage,
+          pdu.data_coding || 0,
+          { codePatterns: client.codePatterns },
         );
-        session.send(pdu.response({ command_status: smpp.ESME_RINVMSGLEN }));
-        return;
+
+        if (!extracted) {
+          sessionLog.warn(
+            { destination: maskPhone(phone) },
+            'Could not extract OTP code from message',
+          );
+          session.send(pdu.response({ command_status: smpp.ESME_RINVMSGLEN }));
+          return;
+        }
+        code = extracted;
       }
 
       // 5. Resolve sender from source_addr

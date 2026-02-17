@@ -68,7 +68,7 @@ export function resolveSender(
   return undefined;
 }
 
-function decodeMessage(
+export function decodeMessage(
   msg: string | Buffer | { message: string; udh?: Buffer },
   dataCoding: number,
 ): string {
