@@ -16,7 +16,7 @@ import { CredentialStore } from '../../src/auth/credential-store.js';
 
 const API_BASE = 'https://auth.example.com';
 const API_KEY = 'test-auth-key';
-const AUTH_PATH = '/api/v1/smpp/auth/';
+const AUTH_PATH = '/imsg/api/v1/smpp/auth/';
 
 const authApiConfig: AuthApiConfig = {
   url: API_BASE,
@@ -29,7 +29,6 @@ function makeClientResponse(overrides: Partial<ClientConfig> = {}): ClientConfig
     systemId: 'test_client',
     password: 'test_pass',
     apiKey: 'test-api-key',
-    defaultSender: 'OTP',
     defaultLanguage: 'en',
     maxTps: 50,
     codePatterns: [],

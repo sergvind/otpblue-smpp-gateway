@@ -82,19 +82,15 @@ describe('resolveSender', () => {
     expect(resolveSender('VeryLongBrandNameHere', 0x05)).toBe('VeryLongBrandNam');
   });
 
-  it('uses defaultSender for international TON (0x01)', () => {
-    expect(resolveSender('+14155551234', 0x01, 'MyBank')).toBe('MyBank');
+  it('returns undefined for international TON (0x01)', () => {
+    expect(resolveSender('+14155551234', 0x01)).toBeUndefined();
   });
 
-  it('uses defaultSender for short code TON (0x03)', () => {
-    expect(resolveSender('12345', 0x03, 'MyApp')).toBe('MyApp');
+  it('returns undefined for short code TON (0x03)', () => {
+    expect(resolveSender('12345', 0x03)).toBeUndefined();
   });
 
-  it('falls back to source_addr when no default', () => {
-    expect(resolveSender('+14155551234', 0x01)).toBe('+14155551234');
-  });
-
-  it('falls back to "OTP" when nothing available', () => {
-    expect(resolveSender('', 0x01)).toBe('OTP');
+  it('returns undefined when nothing available', () => {
+    expect(resolveSender('', 0x01)).toBeUndefined();
   });
 });

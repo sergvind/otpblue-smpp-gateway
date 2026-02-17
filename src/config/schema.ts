@@ -4,7 +4,6 @@ const ClientSchema = z.object({
   systemId: z.string().min(1).max(16),
   password: z.string().min(1),
   apiKey: z.string().min(1),
-  defaultSender: z.string().max(16).optional(),
   defaultLanguage: z.string().length(2).default('en'),
   maxTps: z.number().int().min(1).max(10000).default(50),
   codePatterns: z.array(z.string()).optional(),

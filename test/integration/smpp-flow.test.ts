@@ -15,7 +15,7 @@ const API_PATH = '/imsg/api/v1.1/otp/send/';
 
 const AUTH_API_BASE = 'https://auth.test.com';
 const AUTH_API_KEY = 'test-auth-key';
-const AUTH_PATH = '/api/v1/smpp/auth/';
+const AUTH_PATH = '/imsg/api/v1/smpp/auth/';
 
 const authApiConfig: AuthApiConfig = {
   url: AUTH_API_BASE,
@@ -27,7 +27,6 @@ const testClient: ClientConfig = {
   systemId: 'test_client',
   password: 'test_pass',
   apiKey: 'test-api-key-123',
-  defaultSender: 'TestApp',
   defaultLanguage: 'en',
   maxTps: 100,
   enabled: true,
@@ -167,7 +166,6 @@ describe('SMPP Integration Flow', () => {
         contact: '+14155551234',
         code: '482910',
         sender: 'MyBank',
-        language: 'en',
       })
       .reply(200, {
         success: true,

@@ -4,7 +4,6 @@
       "systemId": "acme_otp",
       "password": "your-plaintext-password-here",
       "apiKey": "your-otpblue-api-key-here",
-      "defaultSender": "Acme",
       "defaultLanguage": "en",
       "maxTps": 50,
       "enabled": true,

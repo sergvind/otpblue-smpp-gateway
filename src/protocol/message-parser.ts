@@ -54,20 +54,15 @@ export function extractOtpCode(
 /**
  * Resolve the sender name from SMPP source_addr and TON.
  * TON=5 (Alphanumeric) means source_addr is a brand name.
- * Otherwise fall back to defaultSender.
+ * Otherwise returns undefined to let the API decide.
  */
 export function resolveSender(
   sourceAddr: string,
   sourceAddrTon: number,
-  defaultSender?: string,
 ): string | undefined {
   // TON 0x05 = Alphanumeric → brand name like "MyBank"
   if (sourceAddrTon === 0x05 && sourceAddr) {
     return sourceAddr.slice(0, 16);
-  }
-  // For phone numbers/short codes, use the configured default
-  if (defaultSender) {
-    return defaultSender;
   }
   // No sender — let the API decide
   return undefined;

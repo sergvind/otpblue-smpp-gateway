@@ -57,7 +57,6 @@ The API returns a client configuration object:
   "systemId": "acme_otp",
   "password": "plaintext-or-bcrypt-hash",
   "apiKey": "otpblue-api-key",
-  "defaultSender": "Acme",
   "defaultLanguage": "en",
   "maxTps": 50,
   "allowedIps": [],

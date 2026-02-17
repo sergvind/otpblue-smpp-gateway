@@ -201,7 +201,6 @@ export function createSessionHandler(
       const sender = resolveSender(
         pdu.source_addr || '',
         pdu.source_addr_ton || 0,
-        client.defaultSender,
       );
 
       // 6. Call OTP Blue API
