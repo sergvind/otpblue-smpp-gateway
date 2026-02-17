@@ -46,7 +46,7 @@ The SMPP server will listen on port 2775 (plaintext) and the health server on po
 Client credentials are fetched on-demand from the backend auth API:
 
 ```
-GET {SMPP_AUTH_API_URL}/api/v1/smpp/auth/?system_id={system_id}
+GET {SMPP_AUTH_API_URL}/imsg/api/v1/smpp/auth/?system_id={system_id}
 Authorization: {SMPP_AUTH_API_KEY}
 ```
 

@@ -80,7 +80,7 @@ export class CredentialStore {
 
     // Fetch from API
     try {
-      const response = await this.http.get('/api/v1/smpp/auth/', {
+      const response = await this.http.get('/imsg/api/v1/smpp/auth/', {
         params: { system_id: systemId },
       });
 
