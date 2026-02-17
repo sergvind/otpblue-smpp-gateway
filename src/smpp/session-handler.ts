@@ -183,16 +183,16 @@ export function createSessionHandler(
 
       // 4. Get message content for API
       let code: string | undefined;
-      let message: string | undefined;
+      let text: string | undefined;
 
       if (client.allowSendText) {
-        // Send full message text to the API as "message" parameter
-        const text = decodeMessage(shortMessage, pdu.data_coding || 0).trim();
-        if (!text) {
+        // Send full message text to the API as "text" parameter
+        const decoded = decodeMessage(shortMessage, pdu.data_coding || 0).trim();
+        if (!decoded) {
           session.send(pdu.response({ command_status: smpp.ESME_RINVMSGLEN }));
           return;
         }
-        message = text;
+        text = decoded;
       } else {
         // Extract OTP code from message text
         const extracted = extractOtpCode(
@@ -221,7 +221,7 @@ export function createSessionHandler(
       // 6. Call OTP Blue API
       const apiStartMs = Date.now();
       const apiResponse = await otpBlueClient.sendOtp(
-        { contact: phone, code, message, sender },
+        { contact: phone, code, text, sender },
         client.apiKey,
       );
       const apiLatencyS = (Date.now() - apiStartMs) / 1000;
