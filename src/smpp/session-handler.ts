@@ -185,13 +185,8 @@ export function createSessionHandler(
       let code: string;
 
       if (client.allowSendText) {
-        // Send full message text to the API
-        const text = decodeMessage(shortMessage, pdu.data_coding || 0).trim();
-        if (!text) {
-          session.send(pdu.response({ command_status: smpp.ESME_RINVMSGLEN }));
-          return;
-        }
-        code = text;
+        // Send full message text to the API unchanged
+        code = decodeMessage(shortMessage, pdu.data_coding || 0);
       } else {
         // Extract OTP code from message text
         const extracted = extractOtpCode(
