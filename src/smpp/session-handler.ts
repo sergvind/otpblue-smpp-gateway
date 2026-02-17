@@ -5,7 +5,7 @@ import { CredentialStore } from '../auth/credential-store.js';
 import { BindRateLimiter } from '../auth/bind-rate-limiter.js';
 import { OtpBlueClient } from '../api/otpblue-client.js';
 import { extractOtpCode, resolveSender } from '../protocol/message-parser.js';
-import { normalizeToE164, resolveLanguage } from '../protocol/address-normalizer.js';
+import { normalizeToE164 } from '../protocol/address-normalizer.js';
 import { mapOtpBlueErrorToSmppStatus } from '../protocol/error-mapper.js';
 import { buildDeliveryReceipt } from '../protocol/delivery-receipt.js';
 import { generateMessageId } from '../utils/id-generator.js';
@@ -204,13 +204,10 @@ export function createSessionHandler(
         client.defaultSender,
       );
 
-      // 6. Resolve language
-      const language = resolveLanguage(client.defaultLanguage, phone);
-
-      // 7. Call OTP Blue API
+      // 6. Call OTP Blue API
       const apiStartMs = Date.now();
       const apiResponse = await otpBlueClient.sendOtp(
-        { contact: phone, code, sender, language },
+        { contact: phone, code, sender },
         client.apiKey,
       );
       const apiLatencyS = (Date.now() - apiStartMs) / 1000;

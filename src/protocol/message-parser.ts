@@ -60,7 +60,7 @@ export function resolveSender(
   sourceAddr: string,
   sourceAddrTon: number,
   defaultSender?: string,
-): string {
+): string | undefined {
   // TON 0x05 = Alphanumeric → brand name like "MyBank"
   if (sourceAddrTon === 0x05 && sourceAddr) {
     return sourceAddr.slice(0, 16);
@@ -69,8 +69,8 @@ export function resolveSender(
   if (defaultSender) {
     return defaultSender;
   }
-  // Last resort: use whatever source_addr we have
-  return sourceAddr || 'OTP';
+  // No sender — let the API decide
+  return undefined;
 }
 
 function decodeMessage(

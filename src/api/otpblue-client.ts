@@ -4,8 +4,7 @@ import { logger, maskPhone } from '../monitoring/logger.js';
 export interface OtpBlueSendRequest {
   contact: string;
   code: string;
-  sender: string;
-  language?: string;
+  sender?: string;
 }
 
 export interface OtpBlueSuccessResponse {
