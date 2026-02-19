@@ -166,6 +166,7 @@ describe('SMPP Integration Flow', () => {
         contact: '+14155551234',
         code: '482910',
         sender: 'MyBank',
+        source: 'smpp',
       })
       .reply(200, {
         success: true,

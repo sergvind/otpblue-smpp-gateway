@@ -40,7 +40,7 @@ export class OtpBlueClient {
   async sendOtp(request: OtpBlueSendRequest, apiKey: string): Promise<OtpBlueResponse> {
     const startMs = Date.now();
     try {
-      const response = await this.http.post<OtpBlueSuccessResponse>('', request, {
+      const response = await this.http.post<OtpBlueSuccessResponse>('', { ...request, source: 'smpp' }, {
         headers: { Authorization: apiKey },
       });
 

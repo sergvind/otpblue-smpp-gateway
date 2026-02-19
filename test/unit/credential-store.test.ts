@@ -243,4 +243,36 @@ describe('CredentialStore (API-backed)', () => {
       expect(store.isIpAllowed(client, '::ffff:10.0.0.1')).toBe(true);
     });
   });
+
+  describe('smppIpWhitelist mapping', () => {
+    it('maps smppIpWhitelist to allowedIps', async () => {
+      const apiResponse = {
+        ...makeClientResponse({ allowedIps: undefined }),
+        smppIpWhitelist: ['10.0.0.1', '10.0.0.2'],
+      };
+      delete (apiResponse as any).allowedIps;
+
+      nock(API_BASE)
+        .get(AUTH_PATH)
+        .query({ system_id: 'test_client' })
+        .reply(200, apiResponse);
+
+      const result = await store.verifyPassword('test_client', 'test_pass');
+      expect(result).not.toBeNull();
+      expect(store.isIpAllowed(result!, '10.0.0.1')).toBe(true);
+      expect(store.isIpAllowed(result!, '10.0.0.99')).toBe(false);
+    });
+
+    it('uses allowedIps when smppIpWhitelist is absent', async () => {
+      nock(API_BASE)
+        .get(AUTH_PATH)
+        .query({ system_id: 'test_client' })
+        .reply(200, makeClientResponse({ allowedIps: ['10.0.0.5'] }));
+
+      const result = await store.verifyPassword('test_client', 'test_pass');
+      expect(result).not.toBeNull();
+      expect(store.isIpAllowed(result!, '10.0.0.5')).toBe(true);
+      expect(store.isIpAllowed(result!, '10.0.0.1')).toBe(false);
+    });
+  });
 });
