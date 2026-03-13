@@ -1,8 +1,12 @@
 const DEFAULT_PATTERNS: RegExp[] = [
   // Keyword followed by digits: "code: 482910", "Your OTP is 123456", "PIN: 9821"
   /(?:code|pin|otp|token|password|passcode|verify|verification)[:\s\-is]+(\d[\d\-\s]{2,9}\d)/i,
+  // Digits before keyword: "123 123 is your code", "123-456 is your OTP"
+  /(\d[\d\-\s]{2,9}\d)\s*(?:is\s+(?:your?\s+)?)?(?:code|pin|otp|token|password|passcode|verify|verification)/i,
   // Standalone 4-10 digit number (most common OTP format)
   /\b(\d{4,10})\b/,
+  // Standalone digits with separators: "123 456", "123-456"
+  /\b(\d{1,5}[\-\s]\d{1,5})\b/,
 ];
 
 export interface ParsedMessage {
@@ -44,7 +48,8 @@ export function extractOtpCode(
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match?.[1]) {
-      return match[1].replace(/[-\s]/g, '');
+      const code = match[1].replace(/[-\s]/g, '');
+      if (/^\d{4,10}$/.test(code)) return code;
     }
   }
 

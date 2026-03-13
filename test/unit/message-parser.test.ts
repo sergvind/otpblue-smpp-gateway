@@ -46,6 +46,30 @@ describe('extractOtpCode', () => {
     expect(extractOtpCode('1234567890', 0)).toBe('1234567890');
   });
 
+  it('extracts code from "123 123 is your code"', () => {
+    expect(extractOtpCode('123 123 is your code', 0)).toBe('123123');
+  });
+
+  it('extracts code from "123-123 is your code"', () => {
+    expect(extractOtpCode('123-123 is your code', 0)).toBe('123123');
+  });
+
+  it('extracts code from "123 456 is your OTP"', () => {
+    expect(extractOtpCode('123 456 is your OTP', 0)).toBe('123456');
+  });
+
+  it('extracts code from "Your code is 123 456"', () => {
+    expect(extractOtpCode('Your code is 123 456', 0)).toBe('123456');
+  });
+
+  it('extracts spaced code from surrounding text', () => {
+    expect(extractOtpCode('Please use 123 456 to verify', 0)).toBe('123456');
+  });
+
+  it('returns null for too-short separated digits', () => {
+    expect(extractOtpCode('Use 1 2 to verify', 0)).toBeNull();
+  });
+
   it('returns null for empty string', () => {
     expect(extractOtpCode('', 0)).toBeNull();
   });
